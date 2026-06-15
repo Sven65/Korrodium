@@ -7,6 +7,7 @@ pub mod state;
 mod host;
 
 
+
 pub fn run(data: Vec<u8>, args: Vec<String>) -> Result<(), wasmi::Error> {
     let engine = Engine::default();
     let module = Module::new(&engine, data)?;
