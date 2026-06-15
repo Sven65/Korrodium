@@ -1,8 +1,8 @@
 use alloc::string::String;
 use pc_keyboard::DecodedKey;
-use wasmi::{Caller, Extern, Linker};
+use wasmi::{Caller, Error, Extern, Linker};
 use crate::wasm::state::HostState;
-use super::HostModule;
+use super::{HostModule, WaitKey, WaitYield};
 
 pub struct IoModule;
 
@@ -35,6 +35,31 @@ fn read_line_blocking() -> Option<String> {
             DecodedKey::RawKey(_) => {}
         }
     }
+}
+
+pub fn register(linker: &mut Linker<HostState>) -> Result<(), Error> {
+    linker.func_wrap("os::io", "print", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| {
+        let Some(Extern::Memory(mem)) = caller.get_export("memory") else { return; };
+        let data = mem.data(&caller);
+        let start = ptr as usize;
+        let end = start.saturating_add(len as usize);
+        if let Some(bytes) = data.get(start..end) {
+            crate::print!("{}", core::str::from_utf8(bytes).unwrap_or("<invalid utf8>"));
+        }
+    })?;
+
+    // Yield back to the executor. Signature () -> (); the Err is the yield signal.
+    linker.func_wrap("os::io", "yield_now", |_caller: Caller<'_, HostState>| -> Result<(), Error> {
+        Err(Error::host(WaitYield))
+    })?;
+
+    linker.func_wrap("os::io", "read_key", |_caller: Caller<'_, HostState>| -> Result<i32, Error> {
+        // Yield back to the runner; it awaits ScancodeStream, then .resume(&[key])
+        // feeds the decoded key in as this call's return value.
+        Err(Error::host(WaitKey))
+    })?;
+
+    Ok(())
 }
 
 impl HostModule for IoModule {
