@@ -1,5 +1,5 @@
+// VERIFY: src/wasm/host/io.rs — IoModule owns print/read_line/yield_now/read_key
 use alloc::string::String;
-use pc_keyboard::DecodedKey;
 use wasmi::{Caller, Error, Extern, Linker};
 use crate::wasm::state::HostState;
 use super::{HostModule, WaitKey, WaitYield};
@@ -19,7 +19,6 @@ fn read_line_blocking() -> Option<String> {
 
     let mut line = String::new();
     loop {
-        // Dra scancodes direkt ur kön (samma kö som interrupten fyller)
         let Some(scancode) = crate::task::keyboard::pop_scancode() else {
             core::hint::spin_loop();
             continue;
@@ -37,35 +36,10 @@ fn read_line_blocking() -> Option<String> {
     }
 }
 
-pub fn register(linker: &mut Linker<HostState>) -> Result<(), Error> {
-    linker.func_wrap("os::io", "print", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| {
-        let Some(Extern::Memory(mem)) = caller.get_export("memory") else { return; };
-        let data = mem.data(&caller);
-        let start = ptr as usize;
-        let end = start.saturating_add(len as usize);
-        if let Some(bytes) = data.get(start..end) {
-            crate::print!("{}", core::str::from_utf8(bytes).unwrap_or("<invalid utf8>"));
-        }
-    })?;
-
-    // Yield back to the executor. Signature () -> (); the Err is the yield signal.
-    linker.func_wrap("os::io", "yield_now", |_caller: Caller<'_, HostState>| -> Result<(), Error> {
-        Err(Error::host(WaitYield))
-    })?;
-
-    linker.func_wrap("os::io", "read_key", |_caller: Caller<'_, HostState>| -> Result<i32, Error> {
-        // Yield back to the runner; it awaits ScancodeStream, then .resume(&[key])
-        // feeds the decoded key in as this call's return value.
-        Err(Error::host(WaitKey))
-    })?;
-
-    Ok(())
-}
-
 impl HostModule for IoModule {
     fn namespace(&self) -> &'static str { "os::io" }
 
-    fn register(&self, linker: &mut Linker<HostState>) -> Result<(), wasmi::Error> {
+    fn register(&self, linker: &mut Linker<HostState>) -> Result<(), Error> {
         let ns = self.namespace();
 
         linker.func_wrap(ns, "print", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| {
@@ -83,21 +57,17 @@ impl HostModule for IoModule {
                 return -1;   // Ctrl+C / avbruten
             };
 
-            let Some(Extern::Memory(mem)) = caller.get_export("memory") else {
-                return -2;   // gästen saknar minnes-export, borde inte hända
-            };
+            super::write_to_guest(&mut caller, ptr, max_len, line.as_bytes())
+        })?;
 
-            let bytes = line.as_bytes();
-            let n = bytes.len().min(max_len.max(0) as usize);
-            let start = ptr as usize;
+        // Yield to executor: () -> (); the Err is the yield signal.
+        linker.func_wrap(ns, "yield_now", |_caller: Caller<'_, HostState>| -> Result<(), Error> {
+            Err(Error::host(WaitYield))
+        })?;
 
-            match mem.data_mut(&mut caller).get_mut(start..start + n) {
-                Some(dst) => {
-                    dst.copy_from_slice(&bytes[..n]);
-                    n as i32
-                }
-                None => -2,   // ogiltigt ptr/len från gästen
-            }
+        // Wait for a key: () -> i32; runner awaits InputFocus, resumes with the encoded key.
+        linker.func_wrap(ns, "read_key", |_caller: Caller<'_, HostState>| -> Result<i32, Error> {
+            Err(Error::host(WaitKey))
         })?;
 
         Ok(())

@@ -1,6 +1,6 @@
-use wasmi::{Caller, Error, Extern, Linker};
+use wasmi::{Caller, Error, Linker};
 use crate::wasm::state::HostState;
-use super::HostModule;
+use super::{write_to_guest, Exit, HostModule};
 
 pub struct ProcModule;
 
@@ -18,13 +18,14 @@ impl HostModule for ProcModule {
 
         linker.func_wrap(ns, "args_get", |mut caller: Caller<'_, HostState>, ptr: i32, max_len: i32| -> i32 {
             let joined = caller.data().args.join("\n");
-            let bytes = joined.as_bytes();
-            let n = bytes.len().min(max_len.max(0) as usize);
-            let Some(Extern::Memory(mem)) = caller.get_export("memory") else { return -2; };
-            match mem.data_mut(&mut caller).get_mut(ptr as usize..ptr as usize + n) {
-                Some(dst) => { dst.copy_from_slice(&bytes[..n]); n as i32 }
-                None => -2,
-            }
+            write_to_guest(&mut caller, ptr, max_len, joined.as_bytes())
+        })?;
+
+        // Terminate the program with the given exit code; the runner catches
+        // the trap and reports `HostState::exit_code` as the result of `run`.
+        linker.func_wrap(ns, "exit", |mut caller: Caller<'_, HostState>, code: i32| -> Result<(), Error> {
+            caller.data_mut().exit_code = Some(code);
+            Err(Error::host(Exit))
         })?;
 
         Ok(())

@@ -27,13 +27,16 @@ impl Command for RunCommand {
             }
         };
 
+        let prog_args: Vec<String> = args[1..].to_vec();
+
         // Run the program as its own async task so the executor can
         // interleave it with other tasks. Suppress the shell's immediate
         // re-prompt; the task re-prompts when the program exits.
         SUPPRESS_PROMPT.store(true, Ordering::SeqCst);
         spawn_task(Task::new(async move {
-            match run(data).await {
-                Ok(()) => println!("Program completed"),
+            match run(data, prog_args).await {
+                Ok(0) => println!("Program completed"),
+                Ok(code) => println!("Program exited with code {}", code),
                 Err(e) => println!("Error during program execution: {}", e),
             }
             SUPPRESS_PROMPT.store(false, Ordering::SeqCst);

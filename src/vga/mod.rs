@@ -47,6 +47,14 @@ impl ColorCode {
     pub const fn new(foreground: Color, background: Color) -> ColorCode {
         ColorCode((background as u8) << 4 | (foreground as u8))
     }
+
+    pub const fn from_byte(byte: u8) -> ColorCode {
+        ColorCode(byte)
+    }
+
+    pub const fn to_byte(&self) -> u8 {
+        self.0
+    }
 }
 
 fn unicode_to_cp437(c: char) -> u8 {
@@ -332,6 +340,16 @@ pub fn clear_row(row: usize, color: ColorCode) {
     interrupts::without_interrupts(|| {
         WRITER.lock().clear_row_color(row, color);
     });
+}
+
+pub fn read_at(row: usize, col: usize) -> Option<ScreenChar> {
+    if row >= BUFFER_HEIGHT || col >= BUFFER_WIDTH {
+        return None;
+    }
+    use x86_64::instructions::interrupts;
+    interrupts::without_interrupts(|| {
+        Some(WRITER.lock().read_at(row, col))
+    })
 }
 
 pub fn move_cursor(row: usize, col: usize) {
