@@ -20,6 +20,8 @@ use crate::shell::history::History;
 
 static SCANCODE_QUEUE: OnceCell<ArrayQueue<u8>> = OnceCell::uninit();
 static WAKER: AtomicWaker = AtomicWaker::new();
+pub static HAS_FOCUS: AtomicBool = AtomicBool::new(false);
+static FOCUS_WAKER: AtomicWaker = AtomicWaker::new();
 
 static CTRLC_FLAG: AtomicBool = AtomicBool::new(false);
 static CTRL_HELD: AtomicBool = AtomicBool::new(false);
@@ -34,6 +36,10 @@ pub(crate) fn add_scancode(scancode: u8) {
     } else {
         println!("WARNING: scancode queue uninitialized");
     }
+}
+
+pub fn pop_scancode() -> Option<u8> {
+    SCANCODE_QUEUE.try_get().ok()?.pop()
 }
 
 pub struct ScancodeStream {
@@ -73,7 +79,6 @@ impl Stream for ScancodeStream {
 }
 
 static FOCUSED_INPUT: OnceCell<ArrayQueue<DecodedKey>> = OnceCell::uninit();
-pub static HAS_FOCUS: AtomicBool = AtomicBool::new(false);
 
 pub struct InputFocus {
     queue: &'static ArrayQueue<DecodedKey>,
@@ -99,6 +104,20 @@ impl InputFocus {
 
     pub fn poll_key(&self) -> Option<DecodedKey> {
         self.queue.pop()
+    }
+
+    pub async fn next_key_async(&self) -> DecodedKey {
+        use core::future::poll_fn;
+        poll_fn(|cx| {
+            if let Some(key) = self.queue.pop() {
+                return Poll::Ready(key);
+            }
+            FOCUS_WAKER.register(cx.waker());
+            match self.queue.pop() {
+                Some(key) => { FOCUS_WAKER.take(); Poll::Ready(key) }
+                None => Poll::Pending,
+            }
+        }).await
     }
 }
 
@@ -174,6 +193,7 @@ pub async fn print_keypresses() {
                 if HAS_FOCUS.load(Ordering::SeqCst) {
                     if let Ok(q) = FOCUSED_INPUT.try_get() {
                         q.push(key).ok();
+                        FOCUS_WAKER.wake();
                     }
                     continue;
                 }

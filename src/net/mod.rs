@@ -430,8 +430,12 @@ pub fn http_get(host: &str, path: &str, ip: Ipv4Address, port: u16) -> Option<Ve
         socket.send_slice(request.as_bytes()).ok()?;
     }
 
-    let mut response = alloc::vec![0u8; 8192];
-    let mut total = 0;
+    // Grows to fit the whole response — a fixed-size buffer here previously
+    // capped downloads at 8192 bytes total (headers + body) and silently
+    // truncated anything larger, since the loop treated "buffer full" as
+    // "transfer done".
+    let mut response: Vec<u8> = Vec::new();
+    let mut scratch = alloc::vec![0u8; 4096];
 
     for _ in 0..30_000 {
         crate::task::keyboard::process_pending_scancodes();
@@ -448,9 +452,8 @@ pub fn http_get(host: &str, path: &str, ip: Ipv4Address, port: u16) -> Option<Ve
 
         let socket = stack.sockets.get_mut::<tcp::Socket>(handle);
         if socket.can_recv() {
-            let n = socket.recv_slice(&mut response[total..]).unwrap_or(0);
-            total += n;
-            if total >= response.len() { break; }
+            let n = socket.recv_slice(&mut scratch).unwrap_or(0);
+            response.extend_from_slice(&scratch[..n]);
         }
 
         // Break when server has closed and we've read everything
@@ -463,8 +466,7 @@ pub fn http_get(host: &str, path: &str, ip: Ipv4Address, port: u16) -> Option<Ve
 
     stack.sockets.remove(handle);
 
-    if total == 0 { return None; }
-    response.truncate(total);
+    if response.is_empty() { return None; }
     Some(response)
 }
 
