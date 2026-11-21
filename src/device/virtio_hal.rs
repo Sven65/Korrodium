@@ -9,7 +9,11 @@ pub struct OsHal;
 
 static mut PHYS_MEM_OFFSET: u64 = 0;
 
-const DMA_POOL_SIZE: usize = 64 * 1024;
+// 4MB: comfortably fits a 640x480x4 virtio-gpu framebuffer (~1.2MB) plus
+// virtqueue overhead for blk+gpu+sound. This bump allocator never frees, so
+// usage is cumulative for the whole kernel session, not a peak — leave
+// generous headroom rather than sizing tightly.
+const DMA_POOL_SIZE: usize = 4 * 1024 * 1024;
 static DMA_POOL: Mutex<DmaBumpAlloc> = Mutex::new(DmaBumpAlloc::new());
 
 struct DmaBumpAlloc {

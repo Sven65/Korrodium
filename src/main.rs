@@ -103,6 +103,13 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     }
 
+    // GPU/software-console init is parked (see src/vga/mod.rs's gpu_console
+    // module doc comment) — virtio-gpu-pci doesn't render through this
+    // QEMU build's cocoa display, so this isn't called for now. Also, with
+    // no "-device virtio-gpu-pci" in run-args, find_and_init_gpu's PCI scan
+    // would run to completion with no match every boot, which is slow under
+    // TCG emulation — leave it uncalled rather than pay that cost for nothing.
+
     println!("Please wait, init e1000...");
 
     test_os::device::e1000::init(boot_info.physical_memory_offset);

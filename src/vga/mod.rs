@@ -1,5 +1,6 @@
 use volatile::Volatile;
 use core::fmt;
+use core::sync::atomic::{AtomicBool, Ordering};
 use lazy_static::lazy_static;
 use spin::Mutex;
 use x86_64::instructions::port::Port;
@@ -7,6 +8,17 @@ use alloc::vec::Vec;
 use crate::serial_println;
 
 pub mod ansii;
+// `gpu_console` renders this console into a virtio-gpu framebuffer instead of
+// the legacy 0xb8000 MMIO backing below — parked, not deleted: virtio-gpu-pci
+// doesn't visibly render through this QEMU build's cocoa display backend
+// (confirmed: no GL-accelerated virtio-gpu variant and no sdl/gtk backend
+// exist in this build at all), so the console reverted to MMIO for now.
+// `CONSOLE_DIRTY` is unused while gpu_console isn't wired into the executor,
+// but is kept so gpu_console.rs keeps compiling for whenever this gets
+// revisited (e.g. once a QEMU build with GL support is available).
+pub mod gpu_console;
+
+static CONSOLE_DIRTY: AtomicBool = AtomicBool::new(true);
 
 pub const BUFFER_HEIGHT: usize = 25;
 pub const BUFFER_WIDTH: usize = 80;
@@ -116,6 +128,7 @@ impl Writer {
         if row >= BUFFER_HEIGHT || col >= BUFFER_WIDTH {
             return;
         }
+        CONSOLE_DIRTY.store(true, Ordering::Relaxed);
         self.buffer.chars[row][col].write(ScreenChar {
             ascii_character: byte,
             color_code: color,
@@ -135,6 +148,7 @@ impl Writer {
 
     // Fill a row with spaces using a given color — useful for status bar and clearing lines
     pub fn clear_row_color(&mut self, row: usize, color: ColorCode) {
+        CONSOLE_DIRTY.store(true, Ordering::Relaxed);
         for col in 0..BUFFER_WIDTH {
             self.buffer.chars[row][col].write(ScreenChar {
                 ascii_character: b' ',
@@ -178,6 +192,7 @@ impl Writer {
 
     // The regular terminal write_byte — writes at current cursor and advances it
     pub fn write_byte(&mut self, byte: u8) {
+        CONSOLE_DIRTY.store(true, Ordering::Relaxed);
         match byte {
             b'\n' => self.new_line(),
             b'\x7f' => {

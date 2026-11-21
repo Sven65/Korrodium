@@ -2,6 +2,7 @@ pub mod ahci;
 pub mod scsi;
 pub mod virtio_hal;
 pub mod e1000;
+pub mod gpu;
 
 use x86_64::instructions::port::Port;
 

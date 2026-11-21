@@ -17,6 +17,30 @@ pub fn rdtsc() -> u64 {
     unsafe { core::arch::x86_64::_rdtsc() }
 }
 
+/// Reprograms PIT channel 0 to fire at ~100Hz instead of the uninitialized
+/// default (~18.2Hz) — needed for the GPU console's redraw pacing and for
+/// wasm-exposed frame timing (`ticks()`).
+pub fn init_pit() {
+    use x86_64::instructions::port::Port;
+
+    const PIT_FREQUENCY_HZ: u32 = 1_193_182;
+    const TARGET_HZ: u32 = 100;
+    let divisor = (PIT_FREQUENCY_HZ / TARGET_HZ) as u16;
+
+    unsafe {
+        let mut cmd: Port<u8> = Port::new(0x43);
+        let mut channel0: Port<u8> = Port::new(0x40);
+        cmd.write(0x36u8); // channel 0, lobyte/hibyte, mode 3 (square wave), binary
+        channel0.write((divisor & 0xff) as u8);
+        channel0.write((divisor >> 8) as u8);
+    }
+}
+
+/// Monotonic tick count at the PIT's reprogrammed ~100Hz rate.
+pub fn ticks() -> u64 {
+    TICKS.load(Ordering::Relaxed)
+}
+
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum InterruptIndex {

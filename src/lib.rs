@@ -50,6 +50,7 @@ pub fn init() {
 	gdt::init();
     interrupts::init_idt();
     unsafe { interrupts::PICS.lock().initialize() };
+    interrupts::init_pit();
     x86_64::instructions::interrupts::enable();
 }
 
